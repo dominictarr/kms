@@ -10,15 +10,23 @@
       color: hsl(0,0%, 20%);
       line-height: 140%;
     }
-    .controls {
-      font-size: 75%;
-      float: right;
-    }
     #content {
       width: 600px;
     }
     .active {
       background: hsl(0, 20%, 92%);
+    }
+    .button {
+      padding: 2px;
+    }
+    #controls {
+      display: relative;
+      background: hsl(0, 0%, 95%);
+      float: right;
+      padding: 5px;
+    }
+    .item {
+      padding: 2px;
     }
 
   </style>
@@ -27,9 +35,8 @@
   <script>
 
 var allItems = []
-
 var filtered = new ArrayEmitter()
-
+var root
 function createGuid () {
   function rhex() {
     return (((1+Math.random())*0x1000000)|0).toString(16).substring(1)
@@ -101,9 +108,75 @@ function newItem(parent) {
 
 var active = null
 
+/*
+  controls
+    - add support for tooltip, and keyboard shortcut.
+*/
+
+var controls = new ArrayEmitter([
+  { name: 'edit',
+    action: function (item) {
+      item.emit('edit')
+    }
+  },
+  { name: 'done',
+    action: function (item) {
+      item.set('value', item.get('value') + ' @done')//set the date.
+    }
+  },
+  { name: 'new',
+    action: function (item) {
+      var i = newItem(root)
+      root.children.push(i)
+      filtered.push(i)
+    }
+  },
+  { name: '+child',
+    action: function (item) {
+      item.children.push(newItem(item))
+    }
+  },
+  { name: '+after', 
+    action: function (item) {
+      if(!item.parent) return
+      var parent = item.parent
+      var index = parent.children.indexOf(item)
+      parent.children.splice(index + 1, 0, newItem(item.parent))
+    }
+  },
+  { name: '+before', 
+    action: function (item) {
+      if(!item.parent) return
+      var parent = item.parent
+      var index = parent.children.indexOf(item)
+      parent.children.splice(index, 0, i = newItem( item.parent))
+    }
+  },
+  { name: 'delete', 
+    action: function (item) {
+      if(!item.parent) return
+      var parent = item.parent
+      var index = parent.children.indexOf(item)
+      parent.children.splice(index, 1)
+      item.emit('delete')
+    }
+  } 
+])
+// this renders all controls.
+
+var controlsList = List({
+  item: function (action) {
+    return vu(['span.button', {}, vu.a(action.name, function () {
+      return action.action(active)
+    })])
+  }, 
+  track: controls,
+  tag: 'div', id: 'controls'
+})
+
 function itemView (item) {
   var list
-  var controls
+//  var controls
   var editor
   var el
   item.on('activate', function () {
@@ -111,11 +184,17 @@ function itemView (item) {
       active.emit('deactivate')
     active = item
     el.classList.add('active')
-    visible(controls, true)
+    console.log(el)
+    var top = el.getBoundingClientRect().top
+    var height = controlsList.getBoundingClientRect().height
+    console.log(height,  top, top - height)
+    controlsList.style.setProperty('position', 'relative')
+    controlsList.style.setProperty('top', ((window.scrollY + top) - (height + 10)) + 'px')
+  //  visible(controls, true)
   })
   item.on('deactivate', function () {
     el.classList.remove('active')
-    visible(controls, false)
+ //   visible(controls, false)
   })
  item.on('edit', function (n) {
     var e = editor.edit()
@@ -129,6 +208,7 @@ function itemView (item) {
     }
     item.removeAllListeners()
   })
+  
   el = vu(
     [item.parent ? 'li.item' : 'div.root', 
       { onmouseover: function (e) {
@@ -136,38 +216,10 @@ function itemView (item) {
           item.emit('activate')
           return false
         }
-      },
+      }/*,
       
       controls = vu(['div.controls', 
-        vu.a('edit', function () {
-          item.emit('edit')
-        }),' ',
-        vu.a('done', function () {
-          item.set('value', item.get('value') + ' @done')//set the date.
-        }),' ',
-        vu.a('+child', function () {
-          item.children.push(newItem(item))
-        }),
-        vu.a('+after', function () {
-          if(!item.parent) return
-          var parent = item.parent
-          var index = parent.children.indexOf(item)
-          parent.children.splice(index + 1, 0, newItem(item.parent))
-        }),
-        vu.a('+before', function () {
-          if(!item.parent) return
-          var parent = item.parent
-          var index = parent.children.indexOf(item)
-          parent.children.splice(index, 0, i = newItem( item.parent))
-        }),
-        vu.a(' delete', function () {
-          if(!item.parent) return
-          var parent = item.parent
-          var index = parent.children.indexOf(item)
-          parent.children.splice(index, 1)
-          item.emit('delete')
-        })
-      ]),
+     ])*/,
       editor = vu.edit({
         get: function () {return item.value},
         set: function (v) {item.value = v},
@@ -179,7 +231,7 @@ function itemView (item) {
     ]
   )
 
-  visible(controls, false)
+//  visible(controls, false)
   list.track(item.children)
   return el          
 }
@@ -191,7 +243,7 @@ function itemView (item) {
 // and recalculate current state -- also will give versioning.
 
 var kms = localStorage.getItem('kms') 
-var root = kms ? Item.hydrate(JSON.parse(kms)) : new Item('root')
+root = kms ? Item.hydrate(JSON.parse(kms)) : new Item('root')
 
 // by default, just display items that are children of root.
 function childOfRoot (e) {
@@ -215,7 +267,7 @@ setInterval(function () {
   localStorage.setItem('kms', JSON.stringify(root))
 }, 1e3)
 
-document.body.appendChild(vu(['div#content'])).appendChild(filteredList)
+document.body.appendChild(vu(['div#content', {}, controlsList, filteredList]))
  
   </script>
 </html>
