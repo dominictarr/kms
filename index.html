@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+  <head>
+  <script src=./node_modules/vu/lib/events.js></script>
+  <script src=./node_modules/vu/lib/array-emitter.js></script>
+  <script src=./node_modules/vu/lib/vu-client.js></script>
+  <style>
+    body {
+      background: hsl(0, 0%, 95%);
+      color: hsl(0,0%, 20%);
+      line-height: 140%;
+    }
+    .controls {
+      font-size: 75%;
+      float: right;
+    }
+    #content {
+      width: 600px;
+    }
+    .active {
+      background: hsl(0, 20%, 92%);
+    }
+
+  </style>
+  </head>
+  <body></body>
+  <script>
+
+var allItems = []
+
+var filtered = new ArrayEmitter()
+
+function createGuid () {
+  function rhex() {
+    return (((1+Math.random())*0x1000000)|0).toString(16).substring(1)
+  }
+  return ''+rhex()+rhex()+rhex()+rhex()
+}
+
+function Item (value, parent) {
+  this.value = value
+  this.children = new ArrayEmitter()
+  if(parent)
+    this.parent = parent
+  this.toJSON = function () {
+    return {
+      value: this.value, 
+      children: this.children.array, 
+      guid: this.guid
+    }
+  }
+}
+
+//TODO check if this works.
+// XXX will have to change array emitter to accept a non empty array.
+// this should be enough to save all items in one go.
+
+Item.hydrate = function (raw, parent) {
+  var i = new Item(raw.value, parent)
+  i.guid = raw.guid || createGuid()
+  allItems.push(i)
+  raw.children.forEach(function (e) {
+    return i.children.push(Item.hydrate(e, i))
+  })
+  return i
+}
+Item.prototype = new EventEmitter()
+
+function dehydrateFlat () {
+  return allItems.map(function (e) {
+    return {
+      guid: e.guid,
+      value: e.value,
+      children: e.children.map(function (e) {return e.guid})
+    }
+  })
+}
+
+function toggleVisible (a,b, inline) {
+  a.style.setProperty('display', 'none')
+  b.style.setProperty('display', inline || 'inline')
+}
+
+function visible( el, bool) {
+  el.style.setProperty('display', 
+      bool === true ? 'block'
+    : bool === false ? 'none'
+    : bool)
+}
+
+function newItem(parent) {
+  var i = new Item('todo...', parent)
+  i.guid = createGuid()
+  allItems.push(i)
+  setTimeout(function () {
+    i.emit('activate')
+    i.emit('edit', true)
+  }, 0)
+  return i
+}
+
+var active = null
+
+function itemView (item) {
+  var list
+  var controls
+  var editor
+  var el
+  item.on('activate', function () {
+    if(active)
+      active.emit('deactivate')
+    active = item
+    el.classList.add('active')
+    visible(controls, true)
+  })
+  item.on('deactivate', function () {
+    el.classList.remove('active')
+    visible(controls, false)
+  })
+ item.on('edit', function (n) {
+    var e = editor.edit()
+    if(n)
+      e.select(0,-1)
+  })
+  item.on('delete', function () {
+    var i = filtered.indexOf(item)
+    if(~i) {
+      filtered.splice(i,1)
+    }
+    item.removeAllListeners()
+  })
+  el = vu(
+    [item.parent ? 'li.item' : 'div.root', 
+      { onmouseover: function (e) {
+          e.stopPropagation()
+          item.emit('activate')
+          return false
+        }
+      },
+      
+      controls = vu(['div.controls', 
+        vu.a('edit', function () {
+          item.emit('edit')
+        }),' ',
+        vu.a('done', function () {
+          item.set('value', item.get('value') + ' @done')//set the date.
+        }),' ',
+        vu.a('+child', function () {
+          item.children.push(newItem(item))
+        }),
+        vu.a('+after', function () {
+          if(!item.parent) return
+          var parent = item.parent
+          var index = parent.children.indexOf(item)
+          parent.children.splice(index + 1, 0, newItem(item.parent))
+        }),
+        vu.a('+before', function () {
+          if(!item.parent) return
+          var parent = item.parent
+          var index = parent.children.indexOf(item)
+          parent.children.splice(index, 0, i = newItem( item.parent))
+        }),
+        vu.a(' delete', function () {
+          if(!item.parent) return
+          var parent = item.parent
+          var index = parent.children.indexOf(item)
+          parent.children.splice(index, 1)
+          item.emit('delete')
+        })
+      ]),
+      editor = vu.edit({
+        get: function () {return item.value},
+        set: function (v) {item.value = v},
+        value: item.value
+      }),
+      [ 'div.children', //add link to hide/show children.
+        {}, list = new List(itemView)
+      ]
+    ]
+  )
+
+  visible(controls, false)
+  list.track(item.children)
+  return el          
+}
+
+//HERE IS TOTALLY MINIMAL PERSISTANCE.
+// better would be to store each item seperately.
+// better would be to save only when and item changes.
+// better would be to store each chage seperately.
+// and recalculate current state -- also will give versioning.
+
+var kms = localStorage.getItem('kms') 
+var root = kms ? Item.hydrate(JSON.parse(kms)) : new Item('root')
+
+// by default, just display items that are children of root.
+function childOfRoot (e) {
+  return e.parent === root
+}
+
+function filter(test) {
+  while(filtered.length())
+    filtered.shift()
+  allItems.forEach(function (e) {
+    if(test(e))
+      filtered.push(e)
+  })
+}
+
+var filteredList = List(itemView)
+filteredList.track(filtered)
+filter(childOfRoot)
+
+setInterval(function () {
+  localStorage.setItem('kms', JSON.stringify(root))
+}, 1e3)
+
+document.body.appendChild(vu(['div#content'])).appendChild(filteredList)
+ 
+  </script>
+</html>
