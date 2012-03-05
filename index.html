@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
   <head>
+  <script src=./js/keymaster.js></script>
   <script src=./node_modules/vu/lib/events.js></script>
   <script src=./node_modules/vu/lib/array-emitter.js></script>
   <script src=./node_modules/vu/lib/vu-client.js></script>
@@ -27,6 +28,7 @@
     }
     .item {
       padding: 2px;
+      white-space: pre;
     }
 
   </style>
@@ -59,7 +61,6 @@ function Item (value, parent) {
 }
 
 //TODO check if this works.
-// XXX will have to change array emitter to accept a non empty array.
 // this should be enough to save all items in one go.
 
 Item.hydrate = function (raw, parent) {
@@ -73,7 +74,8 @@ Item.hydrate = function (raw, parent) {
 }
 Item.prototype = new EventEmitter()
 
-function dehydrateFlat () {
+
+function dehydrateFlat () {//not currently used.
   return allItems.map(function (e) {
     return {
       guid: e.guid,
@@ -110,31 +112,89 @@ var active = null
 
 /*
   controls
-    - add support for tooltip, and keyboard shortcut.
+    - add tooltip.
 */
+var isInput = key.prekeydown
+key.prekeydown = function (e) {
+  key.setScope( false === isInput(e) ? 'input' : 'nav')
+}
+
+key('shift+enter, tab', 'input', function (e) {
+  var tag = (e.target || e.eventSrc)
+  tag.blur()
+  return false
+})
+var move = {
+  right: function () {
+    if(active && active.children.length())
+        active.children.get(0).emit('activate')
+    return false
+  },
+  left: function () {
+    if(active && active.parent && active.parent !== root)
+      active.parent.emit('activate')
+    return false
+  },
+  up: function () {
+    if(!active.parent) return
+    var i = active.parent.children.indexOf(active)
+    var prev = active.parent.children.get(i - 1)
+    if(prev)
+      prev.emit('activate')
+    else
+      move.left()
+    return false
+  },
+  down: function () {
+    if(!active.parent) return
+    var i = active.parent.children.indexOf(active)
+    var prev = active.parent.children.get(i + 1)
+    if(prev)
+      prev.emit('activate')
+    else
+      move.left(), move.down()
+    return false
+  }
+}
+/*
+  this method is too confusing.
+  instead up and down should just move to the next
+  item irrespective of branchness.
+  and then use left and right for hide/show children.
+*/
+
+key('right' , 'nav' , move.right)
+key('left'  , 'nav' , move.left)
+key('up'    , 'nav' , move.up)
+key('down'  , 'nav' , move.down)
 
 var controls = new ArrayEmitter([
   { name: 'edit',
     action: function (item) {
       item.emit('edit')
-    }
+      return false
+    },
+    key: 'e, enter',
   },
   { name: 'done',
     action: function (item) {
       item.set('value', item.get('value') + ' @done')//set the date.
-    }
+    },
+    key: 'd'
   },
   { name: 'new',
     action: function (item) {
       var i = newItem(root)
       root.children.push(i)
       filtered.push(i)
-    }
+    },
+    key: 'n'
   },
   { name: '+child',
     action: function (item) {
       item.children.push(newItem(item))
-    }
+    },
+    key: 'c'
   },
   { name: '+after', 
     action: function (item) {
@@ -142,7 +202,8 @@ var controls = new ArrayEmitter([
       var parent = item.parent
       var index = parent.children.indexOf(item)
       parent.children.splice(index + 1, 0, newItem(item.parent))
-    }
+    },
+    key: 'a'
   },
   { name: '+before', 
     action: function (item) {
@@ -150,7 +211,8 @@ var controls = new ArrayEmitter([
       var parent = item.parent
       var index = parent.children.indexOf(item)
       parent.children.splice(index, 0, i = newItem( item.parent))
-    }
+    },
+    key: 'b'
   },
   { name: 'delete', 
     action: function (item) {
@@ -159,16 +221,20 @@ var controls = new ArrayEmitter([
       var index = parent.children.indexOf(item)
       parent.children.splice(index, 1)
       item.emit('delete')
-    }
+    },
+    key: 'delete, backspace'
   } 
 ])
 // this renders all controls.
 
 var controlsList = List({
   item: function (action) {
-    return vu(['span.button', {}, vu.a(action.name, function () {
+    var trigger = function () {
       return action.action(active)
-    })])
+    }
+    if(action.key)
+      key(action.key, 'nav', trigger)
+    return vu(['span.button', {}, vu.a(action.name, trigger)])
   }, 
   track: controls,
   tag: 'div', id: 'controls'
@@ -176,7 +242,6 @@ var controlsList = List({
 
 function itemView (item) {
   var list
-//  var controls
   var editor
   var el
   item.on('activate', function () {
@@ -184,17 +249,14 @@ function itemView (item) {
       active.emit('deactivate')
     active = item
     el.classList.add('active')
-    console.log(el)
     var top = el.getBoundingClientRect().top
-    var height = controlsList.getBoundingClientRect().height
-    console.log(height,  top, top - height)
+      , height = controlsList.getBoundingClientRect().height
+    el.focus()
     controlsList.style.setProperty('position', 'relative')
     controlsList.style.setProperty('top', ((window.scrollY + top) - (height + 10)) + 'px')
-  //  visible(controls, true)
   })
   item.on('deactivate', function () {
     el.classList.remove('active')
- //   visible(controls, false)
   })
  item.on('edit', function (n) {
     var e = editor.edit()
@@ -216,14 +278,14 @@ function itemView (item) {
           item.emit('activate')
           return false
         }
-      }/*,
-      
-      controls = vu(['div.controls', 
-     ])*/,
+      },
       editor = vu.edit({
-        get: function () {return item.value},
+        get: function () {return vu(['div', {}, item.value])},
         set: function (v) {item.value = v},
-        value: item.value
+        value: item.value,
+        render: function (value) {
+          //this should be 
+        }
       }),
       [ 'div.children', //add link to hide/show children.
         {}, list = new List(itemView)
@@ -231,7 +293,6 @@ function itemView (item) {
     ]
   )
 
-//  visible(controls, false)
   list.track(item.children)
   return el          
 }
